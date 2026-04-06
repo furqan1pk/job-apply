@@ -239,6 +239,103 @@ def reset_failed():
     return {"status": "ok"}
 
 
+@app.post("/api/jobs/{job_id}/apply-one")
+def apply_one_job(job_id: int, dry_run: bool = False, headed: bool = True):
+    """Apply to a single specific job."""
+    with _worker_lock:
+        if _worker_state["running"]:
+            raise HTTPException(409, "Apply already running")
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    # Reset status if needed
+    db.update_job(job_id, status="queued", error="", attempts=0)
+    with _worker_lock:
+        _worker_state["running"] = True
+        _worker_state["paused"] = False
+        _worker_state["total"] = 1
+        _worker_state["completed"] = 0
+        _worker_state["applied"] = 0
+        _worker_state["failed"] = 0
+        _worker_state["current_job"] = None
+    _executor.submit(_run_batch, [job_id], dry_run, headed)
+    return {"status": "started", "job_id": job_id}
+
+
+@app.post("/api/jobs/{job_id}/skip")
+def skip_job(job_id: int, reason: str = "user skipped"):
+    """Mark a job as skipped."""
+    db.update_job(job_id, status="skipped", skipped_reason=reason)
+    db.add_log(job_id, "skipped", reason)
+    return {"status": "skipped"}
+
+
+@app.post("/api/jobs/{job_id}/mark-applied")
+def mark_applied(job_id: int):
+    """Manually mark a job as applied (applied outside this tool)."""
+    db.update_job(job_id, status="applied", manual_applied="1",
+                  applied_at=datetime.now().isoformat())
+    db.add_log(job_id, "manual_applied", "Marked by user")
+    return {"status": "applied"}
+
+
+class BulkIdsRequest(BaseModel):
+    job_ids: list[int]
+
+
+@app.post("/api/jobs/apply-selected")
+def apply_selected(req: BulkIdsRequest, dry_run: bool = False, headed: bool = True):
+    """Apply to specific selected jobs."""
+    with _worker_lock:
+        if _worker_state["running"]:
+            raise HTTPException(409, "Apply already running")
+    # Reset selected jobs to queued
+    for jid in req.job_ids:
+        db.update_job(jid, status="queued", error="")
+    with _worker_lock:
+        _worker_state["running"] = True
+        _worker_state["paused"] = False
+        _worker_state["total"] = len(req.job_ids)
+        _worker_state["completed"] = 0
+        _worker_state["applied"] = 0
+        _worker_state["failed"] = 0
+        _worker_state["current_job"] = None
+    _executor.submit(_run_batch, req.job_ids, dry_run, headed)
+    return {"status": "started", "total": len(req.job_ids)}
+
+
+@app.post("/api/jobs/remove-selected")
+def remove_selected(req: BulkIdsRequest):
+    """Delete multiple jobs."""
+    db.bulk_delete(req.job_ids)
+    return {"deleted": len(req.job_ids)}
+
+
+@app.get("/api/jobs/export")
+def export_jobs():
+    """Export all jobs as CSV download."""
+    jobs = db.get_jobs(limit=9999)
+    output = io.StringIO()
+    if jobs:
+        writer = csv.DictWriter(output, fieldnames=jobs[0].keys())
+        writer.writeheader()
+        for j in jobs:
+            row = {k: (json.dumps(v) if isinstance(v, list) else v) for k, v in j.items()}
+            writer.writerow(row)
+    from fastapi.responses import Response
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=job_applications_{datetime.now().strftime('%Y%m%d')}.csv"}
+    )
+
+
+@app.get("/api/queue-preview")
+def queue_preview():
+    """Get next jobs coming up in queue."""
+    return db.get_queue_preview(limit=5)
+
+
 @app.post("/api/jobs/clear-applied")
 def clear_applied():
     conn = db.get_conn()

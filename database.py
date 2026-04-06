@@ -60,7 +60,10 @@ def init_db():
 
     # Migrations — add columns if missing (for existing DBs)
     existing = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
-    for col, default in [("form_pdf", "''"), ("video_path", "''"), ("resume_used", "''")]:
+    for col, default in [
+        ("form_pdf", "''"), ("video_path", "''"), ("resume_used", "''"),
+        ("skipped_reason", "''"), ("manual_applied", "0"),
+    ]:
         if col not in existing:
             conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT DEFAULT {default}")
     conn.commit()
@@ -161,6 +164,36 @@ def get_next_queued() -> dict | None:
         "SELECT * FROM jobs WHERE status = 'queued' ORDER BY score DESC, id ASC LIMIT 1"
     ).fetchone()
     return _row_to_dict(row) if row else None
+
+
+def bulk_update_status(job_ids: list[int], status: str, **extra):
+    """Update status for multiple jobs at once."""
+    conn = get_conn()
+    sets = "status = ?"
+    vals = [status]
+    for k, v in extra.items():
+        sets += f", {k} = ?"
+        vals.append(v)
+    placeholders = ",".join("?" * len(job_ids))
+    conn.execute(f"UPDATE jobs SET {sets} WHERE id IN ({placeholders})", vals + job_ids)
+    conn.commit()
+
+
+def bulk_delete(job_ids: list[int]):
+    """Delete multiple jobs."""
+    conn = get_conn()
+    placeholders = ",".join("?" * len(job_ids))
+    conn.execute(f"DELETE FROM jobs WHERE id IN ({placeholders})", job_ids)
+    conn.commit()
+
+
+def get_queue_preview(limit: int = 5) -> list[dict]:
+    """Get next N jobs in queue (for live view)."""
+    rows = get_conn().execute(
+        "SELECT id, title, company, platform, score FROM jobs WHERE status = 'queued' ORDER BY score DESC, id ASC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def add_log(job_id: int, action: str, detail: str = ""):
