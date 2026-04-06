@@ -21,7 +21,7 @@ async def apply(page: Page, url: str, profile: dict, resume_pdf: str, dry_run: b
 
     Lever URLs: job page is /jobs/UUID, apply page is /jobs/UUID/apply
     """
-    result = {"status": "failed", "error": "", "title": "", "company": ""}
+    result = {"status": "failed", "error": "", "title": "", "company": "", "screenshots": []}
 
     # Ensure we're on the apply page
     apply_url = url.rstrip("/")
@@ -102,10 +102,16 @@ async def apply(page: Page, url: str, profile: dict, resume_pdf: str, dry_run: b
             await asyncio.sleep(random.uniform(0.3, 0.7))
 
     # --- SCREENSHOT ---
-    screenshot_name = f"lever_{result['title'][:30].replace(' ', '_')}.png"
+    safe_title = "".join(c if c.isalnum() or c in "._-" else "_" for c in result.get('title', 'job')[:20])
+    screenshot_name = f"lv_{safe_title}_form.png"
     screenshot_path = SCREENSHOT_DIR / screenshot_name
+    await page.wait_for_timeout(500)  # Wait for render before capture
     await page.screenshot(path=str(screenshot_path), full_page=True)
+    result["screenshots"].append(str(screenshot_path))
     print(f"  [LV] Screenshot saved: {screenshot_path}")
+
+    # Track resume used
+    result["resume_used"] = resume_pdf
 
     # --- SUBMIT ---
     if dry_run:
@@ -123,7 +129,9 @@ async def apply(page: Page, url: str, profile: dict, resume_pdf: str, dry_run: b
         if any(kw in page_text.lower() for kw in ["thank you", "submitted", "received", "application"]):
             result["status"] = "applied"
             print("  [LV] [OK] Application submitted!")
-            await page.screenshot(path=str(SCREENSHOT_DIR / f"confirm_{screenshot_name}"))
+            confirm_path = str(SCREENSHOT_DIR / f"lv_{safe_title}_confirm.png")
+            await page.screenshot(path=confirm_path)
+            result["screenshots"].append(confirm_path)
         else:
             result["status"] = "applied"  # Assume success
             print("  [LV] [OK] Submitted (no confirmation detected)")

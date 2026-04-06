@@ -25,12 +25,17 @@ async def apply(page: Page, url: str, profile: dict, resume_pdf: str, dry_run: b
     result = {"status": "failed", "error": "", "title": "", "company": "", "screenshots": []}
     step = 0
 
+    def _safe_name(text, max_len=20):
+        return "".join(c if c.isalnum() or c in "._-" else "_" for c in text[:max_len])
+
     async def screenshot(label: str):
         nonlocal step
         step += 1
-        safe_title = "".join(c if c.isalnum() or c in "._-" else "_" for c in result.get('title', 'job')[:20])
+        safe_title = _safe_name(result.get('title', 'job'))
         name = f"gh_{safe_title}_{step:02d}_{label}.png"
         path = SCREENSHOT_DIR / name
+        # Wait for React to finish rendering before capturing
+        await page.wait_for_timeout(500)
         await page.screenshot(path=str(path), full_page=True)
         result["screenshots"].append(str(path))
         print(f"  [GH] Screenshot {step}: {label}")
@@ -190,14 +195,15 @@ async def apply(page: Page, url: str, profile: dict, resume_pdf: str, dry_run: b
 
     # --- SAVE FULL FORM AS PDF (proof of what was submitted) ---
     try:
+        safe_title = _safe_name(result.get('title', 'job'))
         pdf_name = f"gh_{safe_title}_form.pdf"
         pdf_path = SCREENSHOT_DIR / pdf_name
         await page.pdf(path=str(pdf_path), format="A4", print_background=True)
         result["form_pdf"] = str(pdf_path)
         print(f"  [GH] Form PDF saved: {pdf_path}")
     except Exception:
-        # PDF only works in headless mode — save full-page screenshot as fallback
-        fallback = SCREENSHOT_DIR / f"gh_{safe_title}_fullform.png"
+        # PDF only works in headless mode -- save full-page screenshot as fallback
+        fallback = SCREENSHOT_DIR / f"gh_{_safe_name(result.get('title','job'))}_fullform.png"
         await page.screenshot(path=str(fallback), full_page=True)
         result["form_pdf"] = str(fallback)
         print(f"  [GH] Full-page screenshot saved (PDF requires headless): {fallback}")

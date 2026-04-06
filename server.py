@@ -509,7 +509,12 @@ def _run_batch(job_ids: list[int], dry_run: bool, headed: bool):
 
     profile = load_profile()
 
-    for job_id in job_ids:
+    # Create ONE event loop for entire batch (not per-job)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+     for job_id in job_ids:
         # Check if cancelled or paused
         with _worker_lock:
             if not _worker_state["running"]:
@@ -541,13 +546,10 @@ def _run_batch(job_ids: list[int], dry_run: bool, headed: bool):
 
         start = time.time()
         try:
-            # Run the apply function
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Run the apply function using the shared event loop
             result = loop.run_until_complete(
                 apply_single(job["url"], profile, resume, dry_run, headed)
             )
-            loop.close()
 
             duration = time.time() - start
             status = result.get("status", "failed")
@@ -586,6 +588,9 @@ def _run_batch(job_ids: list[int], dry_run: bool, headed: bool):
         # Anti-bot delay
         import random
         time.sleep(random.uniform(3, 7))
+
+    finally:
+        loop.close()
 
     # Done
     with _worker_lock:

@@ -70,23 +70,16 @@ async def apply_single(url: str, profile: dict, resume_pdf: str, dry_run: bool, 
             except Exception:
                 pass
         finally:
-            # Capture video path before closing
+            # Get video path BEFORE closing (path is known, but file isn't finalized yet)
+            video_path_raw = None
             try:
                 video = page.video
                 if video:
-                    video_path = await video.path()
-                    # Rename to something meaningful
-                    safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in (result.get("company", platform))[:20])
-                    new_video = VIDEO_DIR / f"{platform}_{safe}.webm"
-                    try:
-                        Path(video_path).rename(new_video)
-                        result["video_path"] = str(new_video)
-                        print(f"  [VIDEO] Saved: {new_video}")
-                    except Exception:
-                        result["video_path"] = str(video_path)
+                    video_path_raw = await video.path()
             except Exception:
                 pass
 
+            # Close context FIRST (this finalizes the video file)
             try:
                 await context.close()
             except Exception:
@@ -96,6 +89,17 @@ async def apply_single(url: str, profile: dict, resume_pdf: str, dry_run: bool, 
                     await browser.close()
                 except Exception:
                     pass
+
+            # NOW rename the finalized video file
+            if video_path_raw and Path(video_path_raw).exists():
+                try:
+                    safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in (result.get("company", platform))[:20])
+                    new_video = VIDEO_DIR / f"{platform}_{safe}.webm"
+                    Path(video_path_raw).rename(new_video)
+                    result["video_path"] = str(new_video)
+                    print(f"  [VIDEO] Saved: {new_video}")
+                except Exception:
+                    result["video_path"] = str(video_path_raw)
 
     return result
 

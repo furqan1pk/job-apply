@@ -9,7 +9,11 @@ const C = {
 }
 const API = '/api'
 function api(path, opts = {}) {
-  return fetch(`${API}${path}`, { headers: { 'Content-Type': 'application/json', ...opts.headers }, ...opts }).then(r => r.json())
+  return fetch(`${API}${path}`, { headers: { 'Content-Type': 'application/json', ...opts.headers }, ...opts })
+    .then(r => {
+      if (!r.ok) return r.json().then(data => { throw new Error(data.detail || `HTTP ${r.status}`) })
+      return r.json()
+    })
 }
 function Badge({ status }) {
   const colors = { queued: C.textMuted, running: C.blue, applied: C.green, failed: C.red, captcha: C.yellow, skipped: '#484f58', dry_run: C.purple }
@@ -371,7 +375,11 @@ function SettingsPage() {
             </div>
           ))}
         </div>
-        <button onClick={() => { setSaved(true); setTimeout(() => setSaved(false), 2000) }} style={{ ...btnStyle(C.green), marginTop: '14px' }}>{saved ? 'Saved!' : 'Save'}</button>
+        <button onClick={() => {
+          api('/profile', { method: 'PUT', body: JSON.stringify(profile) })
+            .then(() => { setSaved(true); setTimeout(() => setSaved(false), 2000) })
+            .catch(e => alert('Save failed: ' + e.message))
+        }} style={{ ...btnStyle(C.green), marginTop: '14px' }}>{saved ? 'Saved!' : 'Save'}</button>
       </div>
       <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: C.radius, padding: '20px' }}>
         <h2 style={{ fontSize: '15px', fontWeight: 600, color: C.textBright, marginBottom: '14px' }}>Resumes</h2>
