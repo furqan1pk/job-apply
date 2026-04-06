@@ -193,20 +193,16 @@ async def apply(page: Page, url: str, profile: dict, resume_pdf: str, dry_run: b
 
     await screenshot("06_ready_to_submit")
 
-    # --- SAVE FULL FORM AS PDF (proof of what was submitted) ---
-    try:
-        safe_title = _safe_name(result.get('title', 'job'))
-        pdf_name = f"gh_{safe_title}_form.pdf"
-        pdf_path = SCREENSHOT_DIR / pdf_name
-        await page.pdf(path=str(pdf_path), format="A4", print_background=True)
-        result["form_pdf"] = str(pdf_path)
-        print(f"  [GH] Form PDF saved: {pdf_path}")
-    except Exception:
-        # PDF only works in headless mode -- save full-page screenshot as fallback
-        fallback = SCREENSHOT_DIR / f"gh_{_safe_name(result.get('title','job'))}_fullform.png"
-        await page.screenshot(path=str(fallback), full_page=True)
-        result["form_pdf"] = str(fallback)
-        print(f"  [GH] Full-page screenshot saved (PDF requires headless): {fallback}")
+    # --- SAVE FULL FORM PROOF (what was actually filled) ---
+    # Use full-page screenshot (not PDF) because:
+    # 1. page.pdf() only works in headless mode
+    # 2. Screenshots capture React Select values that PDF misses
+    safe_title = _safe_name(result.get('title', 'job'))
+    form_proof = SCREENSHOT_DIR / f"gh_{safe_title}_FILLED_FORM.png"
+    await page.wait_for_timeout(500)
+    await page.screenshot(path=str(form_proof), full_page=True)
+    result["form_pdf"] = str(form_proof)
+    print(f"  [GH] Filled form saved: {form_proof}")
 
     # Track which resume was used
     result["resume_used"] = resume_pdf
@@ -470,7 +466,7 @@ def _get_select_value(label: str, profile: dict) -> str:
         return "Decline"
     if "hispanic" in l or "latino" in l:
         return "No"
-    if "race" in l or "ethnic" in l:
+    if "race" in l or "ethnic" in l or "identify your race" in l:
         return "Decline"
     if "veteran" in l:
         return "not a protected"
