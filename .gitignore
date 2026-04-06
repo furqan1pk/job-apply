@@ -6,3 +6,6 @@ screenshots/
 results/
 jobs.txt
 *.log
+frontend/node_modules/
+*.db
+resumes/
