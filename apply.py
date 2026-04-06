@@ -13,15 +13,16 @@ from results import log_result
 from report import generate_html_report
 import greenhouse
 import lever
+import workday
 
 
 async def apply_single(url: str, profile: dict, resume_pdf: str, dry_run: bool, headed: bool) -> dict:
     """Apply to a single job URL."""
     platform = detect_platform(url)
 
-    if platform not in ("greenhouse", "lever"):
+    if platform not in ("greenhouse", "lever", "workday"):
         print(f"  [SKIP]  Skipping unsupported platform: {platform} ({url})")
-        return {"status": "skipped", "error": f"Unsupported platform: {platform}", "title": "", "company": ""}
+        return {"status": "skipped", "error": f"Unsupported platform: {platform}", "title": "", "company": "", "screenshots": []}
 
     async with async_playwright() as p:
         # Use persistent context with real Chrome user data to bypass Cloudflare
@@ -49,8 +50,10 @@ async def apply_single(url: str, profile: dict, resume_pdf: str, dry_run: bool, 
                 result = await greenhouse.apply(page, url, profile, resume_pdf, dry_run)
             elif platform == "lever":
                 result = await lever.apply(page, url, profile, resume_pdf, dry_run)
+            elif platform == "workday":
+                result = await workday.apply(page, url, profile, resume_pdf, dry_run)
             else:
-                result = {"status": "skipped", "error": "unsupported", "title": "", "company": ""}
+                result = {"status": "skipped", "error": "unsupported", "title": "", "company": "", "screenshots": []}
         except Exception as e:
             result = {"status": "failed", "error": str(e)[:200], "title": "", "company": ""}
             print(f"  [FAIL] Error: {e}")

@@ -156,6 +156,43 @@ async def apply(page: Page, url: str, profile: dict, resume_pdf: str, dry_run: b
 
     await screenshot("06_ready_to_submit")
 
+    # --- HANDLE MULTI-PAGE FORMS ---
+    # Some Greenhouse forms have multiple pages with "Next" buttons
+    page_num = 1
+    while True:
+        next_btn = await page.query_selector(
+            'button:has-text("Next"), button:has-text("Continue"), '
+            'input[value="Next"], a:has-text("Next Step")'
+        )
+        if not next_btn or not await next_btn.is_visible():
+            break
+        print(f"  [GH] Multi-page form detected, going to page {page_num + 1}...")
+        await next_btn.click()
+        await asyncio.sleep(random.uniform(2, 3))
+        page_num += 1
+
+        # Scan and fill questions on the new page
+        new_questions = await _scan_custom_questions(page)
+        if new_questions:
+            print(f"  [GH] Page {page_num}: {len(new_questions)} more questions")
+            for q in new_questions:
+                answer = match_rule(q["text"], profile)
+                if answer is not None:
+                    q["answer"] = answer
+                else:
+                    # Quick LLM call for this page's questions
+                    llm_answers = answer_with_llm([q], result["title"], result.get("company", ""))
+                    q["answer"] = llm_answers.get(q["id"], "")
+                if q.get("answer"):
+                    await _fill_question(page, q)
+                    await asyncio.sleep(random.uniform(0.3, 0.5))
+
+            await _handle_react_selects(page, profile)
+            await screenshot(f"page_{page_num}")
+
+        if page_num > 10:  # Safety limit
+            break
+
     # --- SUBMIT ---
     if dry_run:
         result["status"] = "dry_run"
