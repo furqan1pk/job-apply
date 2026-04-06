@@ -387,91 +387,70 @@ async def _fill_question(page: Page, question: dict):
 
 
 async def _handle_react_selects(page: Page, profile: dict):
-    """Handle React Select dropdowns (country, sponsorship, etc.).
+    """Handle React Select dropdowns using NATIVE Playwright clicks.
 
-    Greenhouse uses 'select-shell' divs with 'select__control' inside.
-    Each dropdown lives inside a '.select' container with a label.
-    Strategy: find all containers, read label, determine answer, click-type-select.
+    Key insight: JS element.click() does NOT trigger React's synthetic events.
+    Must use Playwright's native click() which dispatches real mouse events.
     """
-    # Find all React Select containers using JS for reliability
-    dropdown_info = await page.evaluate("""() => {
-        const results = [];
-        // Find all select containers (Greenhouse Remix pattern)
-        document.querySelectorAll('.select, [class*="select__container"]').forEach(container => {
-            const label = container.querySelector('label, .select__label');
-            const control = container.querySelector('[class*="select__control"]');
-            const input = container.querySelector('[class*="select__input"] input, input[class*="select__input"]');
-            if (label && control) {
-                const labelText = label.textContent.trim();
-                const currentValue = container.querySelector('[class*="select__single-value"]')?.textContent?.trim() || '';
-                const placeholder = container.querySelector('[class*="select__placeholder"]')?.textContent?.trim() || '';
-                // Only process unfilled dropdowns
-                if (placeholder === 'Select...' || !currentValue) {
-                    results.push({ label: labelText, hasInput: !!input });
-                }
-            }
-        });
-        return results;
-    }""")
+    # Find all select controls with their labels
+    controls = await page.query_selector_all('[class*="select__control"]')
+    print(f"  [GH] Found {len(controls)} React Select controls")
 
-    print(f"  [GH] Found {len(dropdown_info)} unfilled React Select dropdowns")
-
-    for dd in dropdown_info:
-        label = dd.get("label", "")
-        target = _get_select_value(label.lower(), profile)
-        if not target:
-            print(f"  [GH] [WARN] No answer for dropdown: {label[:60]}")
-            continue
-
+    filled_count = 0
+    for control in controls:
         try:
-            # Find the specific control by label text
-            control = await page.evaluate_handle(
-                """(labelText) => {
-                    const containers = document.querySelectorAll('.select, [class*="select__container"]');
-                    for (const c of containers) {
-                        const lbl = c.querySelector('label, .select__label');
-                        if (lbl && lbl.textContent.trim().includes(labelText.substring(0, 30))) {
-                            return c.querySelector('[class*="select__control"]');
-                        }
-                    }
-                    return null;
-                }""",
-                label[:40]
+            # Get label text from parent container
+            label_text = await control.evaluate(
+                'el => el.closest(".select, [class*=select__container]")?.querySelector("label, .select__label")?.textContent?.trim() || ""'
             )
-
-            if not control:
+            if not label_text:
                 continue
 
-            # Click to open dropdown
+            # Check if already filled (has single-value, not placeholder)
+            is_empty = await control.evaluate(
+                'el => !!el.querySelector("[class*=select__placeholder]")'
+            )
+            if not is_empty:
+                continue  # Already has a value
+
+            # Determine what to select
+            target = _get_select_value(label_text.lower(), profile)
+            if not target:
+                continue
+
+            # Scroll into view
+            await control.scroll_into_view_if_needed()
+            await asyncio.sleep(0.3)
+
+            # NATIVE Playwright click (triggers React events properly)
             await control.click()
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.8)
 
-            # Type to filter options
-            active_input = await page.query_selector('[class*="select__input"] input:focus, [class*="select__input"][aria-expanded]')
-            if not active_input:
-                active_input = await page.query_selector('[class*="select__input"] input')
-            if active_input:
-                await active_input.fill(target)
-                await asyncio.sleep(0.5)
+            # Find and click the matching option
+            options = await page.query_selector_all('[class*="select__option"]')
+            clicked = False
+            for opt in options:
+                opt_text = (await opt.inner_text()).strip()
+                if target.lower() in opt_text.lower() or opt_text.lower() in target.lower():
+                    await opt.click()
+                    clicked = True
+                    filled_count += 1
+                    print(f"  [GH] Dropdown: '{label_text[:45]}' -> '{opt_text}'")
+                    break
 
-            # Click first matching option
-            option = await page.query_selector('[class*="select__option"]')
-            if option:
-                await option.click()
-                print(f"  [GH] Dropdown '{label[:40]}' -> '{target}'")
-            else:
-                # Try clicking away to close
+            if not clicked:
+                # Close the dropdown
                 await page.keyboard.press("Escape")
-                print(f"  [GH] [WARN] No option found for '{label[:40]}' with value '{target}'")
 
             await asyncio.sleep(0.3)
 
         except Exception as e:
-            print(f"  [GH] [WARN] Dropdown error '{label[:40]}': {e}")
             try:
                 await page.keyboard.press("Escape")
             except Exception:
                 pass
+
+    print(f"  [GH] Filled {filled_count} dropdowns")
 
 
 def _get_select_value(label: str, profile: dict) -> str:
