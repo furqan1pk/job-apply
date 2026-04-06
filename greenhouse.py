@@ -469,9 +469,9 @@ def _get_select_value(label: str, profile: dict) -> str:
     if "race" in l or "ethnic" in l or "identify your race" in l:
         return "Decline"
     if "veteran" in l:
-        return "not a protected"
+        return "I am not"
     if "disability" in l or "disabled" in l:
-        return "do not wish"
+        return "I do not"
     if "state" in l or "province" in l:
         return profile["state"]
     return ""
