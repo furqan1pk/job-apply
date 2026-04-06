@@ -387,71 +387,117 @@ async def _fill_question(page: Page, question: dict):
 
 
 async def _handle_react_selects(page: Page, profile: dict):
-    """Handle React Select dropdowns (country, sponsorship, etc.)."""
-    # Common React Select patterns in Greenhouse
-    selects = await page.query_selector_all('[class*="select__control"]')
+    """Handle React Select dropdowns (country, sponsorship, etc.).
 
-    for select in selects:
+    Greenhouse uses 'select-shell' divs with 'select__control' inside.
+    Each dropdown lives inside a '.select' container with a label.
+    Strategy: find all containers, read label, determine answer, click-type-select.
+    """
+    # Find all React Select containers using JS for reliability
+    dropdown_info = await page.evaluate("""() => {
+        const results = [];
+        // Find all select containers (Greenhouse Remix pattern)
+        document.querySelectorAll('.select, [class*="select__container"]').forEach(container => {
+            const label = container.querySelector('label, .select__label');
+            const control = container.querySelector('[class*="select__control"]');
+            const input = container.querySelector('[class*="select__input"] input, input[class*="select__input"]');
+            if (label && control) {
+                const labelText = label.textContent.trim();
+                const currentValue = container.querySelector('[class*="select__single-value"]')?.textContent?.trim() || '';
+                const placeholder = container.querySelector('[class*="select__placeholder"]')?.textContent?.trim() || '';
+                // Only process unfilled dropdowns
+                if (placeholder === 'Select...' || !currentValue) {
+                    results.push({ label: labelText, hasInput: !!input });
+                }
+            }
+        });
+        return results;
+    }""")
+
+    print(f"  [GH] Found {len(dropdown_info)} unfilled React Select dropdowns")
+
+    for dd in dropdown_info:
+        label = dd.get("label", "")
+        target = _get_select_value(label.lower(), profile)
+        if not target:
+            print(f"  [GH] [WARN] No answer for dropdown: {label[:60]}")
+            continue
+
         try:
-            # Get the label/placeholder
-            container = await select.evaluate("el => el.closest('.field, [class*=field]')")
-            if not container:
-                continue
-
-            # Try to get label text from parent
-            label_el = await page.evaluate_handle(
-                "(el) => el.closest('.field, [class*=field]')?.querySelector('label')",
-                select
+            # Find the specific control by label text
+            control = await page.evaluate_handle(
+                """(labelText) => {
+                    const containers = document.querySelectorAll('.select, [class*="select__container"]');
+                    for (const c of containers) {
+                        const lbl = c.querySelector('label, .select__label');
+                        if (lbl && lbl.textContent.trim().includes(labelText.substring(0, 30))) {
+                            return c.querySelector('[class*="select__control"]');
+                        }
+                    }
+                    return null;
+                }""",
+                label[:40]
             )
-            label_text = ""
-            try:
-                label_text = await label_el.evaluate("el => el?.textContent?.trim() || ''")
-            except Exception:
-                pass
 
-            if not label_text:
+            if not control:
                 continue
 
-            # Determine what to select based on label
-            target_value = _get_select_value(label_text.lower(), profile)
-            if not target_value:
-                continue
-
-            # Click to open, type to filter, click option
-            await select.click()
+            # Click to open dropdown
+            await control.click()
             await asyncio.sleep(0.5)
 
-            input_el = await page.query_selector('[class*="select__input"] input')
-            if input_el:
-                await input_el.fill(target_value)
+            # Type to filter options
+            active_input = await page.query_selector('[class*="select__input"] input:focus, [class*="select__input"][aria-expanded]')
+            if not active_input:
+                active_input = await page.query_selector('[class*="select__input"] input')
+            if active_input:
+                await active_input.fill(target)
                 await asyncio.sleep(0.5)
 
+            # Click first matching option
             option = await page.query_selector('[class*="select__option"]')
             if option:
                 await option.click()
-                await asyncio.sleep(0.3)
+                print(f"  [GH] Dropdown '{label[:40]}' -> '{target}'")
+            else:
+                # Try clicking away to close
+                await page.keyboard.press("Escape")
+                print(f"  [GH] [WARN] No option found for '{label[:40]}' with value '{target}'")
 
-        except Exception:
-            continue
+            await asyncio.sleep(0.3)
+
+        except Exception as e:
+            print(f"  [GH] [WARN] Dropdown error '{label[:40]}': {e}")
+            try:
+                await page.keyboard.press("Escape")
+            except Exception:
+                pass
 
 
 def _get_select_value(label: str, profile: dict) -> str:
     """Map a dropdown label to the target value."""
-    if "country" in label:
+    l = label.lower()
+    if "country" in l and "phone" not in l:
         return profile["country"]
-    if "sponsor" in label:
-        return profile["require_sponsorship"]
-    if "authorized" in label:
-        return profile["authorized_to_work"]
-    if "gender" in label:
+    if "sponsor" in l:
+        return "No"
+    if "authorized" in l or "legally" in l:
+        return "Yes"
+    if "open to working in person" in l or "willing to work" in l or "onsite" in l or "office" in l:
+        return "Yes"
+    if "agreement" in l or "non-compete" in l or "bound by" in l or "restrict" in l:
+        return "No"
+    if "gender" in l:
         return "Decline"
-    if "race" in label or "ethnic" in label:
+    if "hispanic" in l or "latino" in l:
+        return "No"
+    if "race" in l or "ethnic" in l:
         return "Decline"
-    if "veteran" in label:
+    if "veteran" in l:
         return "not a protected"
-    if "disability" in label or "disabled" in label:
+    if "disability" in l or "disabled" in l:
         return "do not wish"
-    if "state" in label or "province" in label:
+    if "state" in l or "province" in l:
         return profile["state"]
     return ""
 
