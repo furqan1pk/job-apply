@@ -68,6 +68,7 @@ function JobsPage() {
   const [stats, setStats] = useState({})
   const [filter, setFilter] = useState('')
   const [expanded, setExpanded] = useState(null)
+  const [review, setReview] = useState(null)
 
   const load = useCallback(() => {
     api('/jobs').then(setJobs)
@@ -128,7 +129,12 @@ function JobsPage() {
             {filtered.map(job => (
               <React.Fragment key={job.id}>
                 <tr
-                  onClick={() => setExpanded(expanded === job.id ? null : job.id)}
+                  onClick={() => {
+                    const next = expanded === job.id ? null : job.id
+                    setExpanded(next)
+                    if (next) api(`/jobs/${job.id}/review`).then(setReview).catch(() => setReview(null))
+                    else setReview(null)
+                  }}
                   style={{ ...trStyle, cursor: 'pointer', background: expanded === job.id ? C.surfaceHover : 'transparent' }}
                 >
                   <td style={tdStyle}>{job.id}</td>
@@ -149,22 +155,58 @@ function JobsPage() {
                 </tr>
                 {expanded === job.id && (
                   <tr>
-                    <td colSpan={8} style={{ padding: '16px', background: C.surfaceHover, borderBottom: `1px solid ${C.border}` }}>
-                      <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                        <div style={{ flex: 1, minWidth: '200px' }}>
-                          <p style={{ color: C.textMuted, fontSize: '13px' }}>URL: <a href={job.url} target="_blank" style={{ color: C.accent }}>{job.url}</a></p>
-                          {job.error && <p style={{ color: C.red, fontSize: '13px', marginTop: '8px' }}>Error: {job.error}</p>}
-                          {job.resume_path && <p style={{ color: C.textMuted, fontSize: '13px', marginTop: '4px' }}>Resume: {job.resume_path.split(/[/\\]/).pop()}</p>}
-                          {job.location && <p style={{ color: C.textMuted, fontSize: '13px', marginTop: '4px' }}>Location: {job.location}</p>}
+                    <td colSpan={8} style={{ padding: '20px', background: C.surfaceHover, borderBottom: `1px solid ${C.border}` }}>
+                      {/* Job Info */}
+                      <div style={{ marginBottom: '16px' }}>
+                        <p style={{ color: C.textMuted, fontSize: '13px' }}>URL: <a href={job.url} target="_blank" rel="noreferrer" style={{ color: C.accent }}>{job.url}</a></p>
+                        {job.error && <p style={{ color: C.red, fontSize: '13px', marginTop: '6px' }}>Error: {job.error}</p>}
+                        {job.location && <p style={{ color: C.textMuted, fontSize: '13px', marginTop: '4px' }}>Location: {job.location}</p>}
+                        {job.salary && <p style={{ color: C.textMuted, fontSize: '13px', marginTop: '4px' }}>Salary: {job.salary}</p>}
+                      </div>
+
+                      {/* Review: Resume Used */}
+                      {review?.resume_used && (
+                        <div style={{ marginBottom: '12px', padding: '10px', background: C.surface, borderRadius: C.radiusSm, border: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: '12px', color: C.textMuted, fontWeight: 600 }}>RESUME USED: </span>
+                          <span style={{ fontSize: '13px', color: C.accent }}>{review.resume_used.name}</span>
                         </div>
-                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                          {(job.screenshots || []).map((s, i) => (
-                            <a key={i} href={`/screenshots/${s.split(/[/\\]/).pop()}`} target="_blank">
-                              <img src={`/screenshots/${s.split(/[/\\]/).pop()}`} alt={`step ${i+1}`}
-                                style={{ width: '160px', height: '100px', objectFit: 'cover', borderRadius: C.radiusSm, border: `1px solid ${C.border}` }} />
-                            </a>
-                          ))}
-                        </div>
+                      )}
+
+                      {/* Review: Form PDF + Video */}
+                      <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+                        {review?.form_pdf && (
+                          <a href={review.form_pdf.url} target="_blank" rel="noreferrer" style={{
+                            padding: '8px 16px', background: C.surface, border: `1px solid ${C.border}`,
+                            borderRadius: C.radiusSm, color: C.accent, fontSize: '13px', fontWeight: 600, textDecoration: 'none',
+                          }}>
+                            View Filled Form (PDF)
+                          </a>
+                        )}
+                        {review?.video && (
+                          <a href={review.video.url} target="_blank" rel="noreferrer" style={{
+                            padding: '8px 16px', background: C.surface, border: `1px solid ${C.border}`,
+                            borderRadius: C.radiusSm, color: C.purple, fontSize: '13px', fontWeight: 600, textDecoration: 'none',
+                          }}>
+                            Watch Recording
+                          </a>
+                        )}
+                      </div>
+
+                      {/* Review: Screenshots */}
+                      <div style={{ fontSize: '12px', color: C.textMuted, fontWeight: 600, marginBottom: '8px' }}>STEP SCREENSHOTS</div>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {(review?.screenshots || []).map((s, i) => (
+                          <a key={i} href={s.url} target="_blank" rel="noreferrer">
+                            <div style={{ textAlign: 'center' }}>
+                              <img src={s.url} alt={s.name}
+                                style={{ width: '180px', height: '110px', objectFit: 'cover', borderRadius: C.radiusSm, border: `1px solid ${C.border}` }} />
+                              <div style={{ fontSize: '11px', color: C.textMuted, marginTop: '4px' }}>{s.name.replace(/^gh_.*?_\d+_/, '').replace('.png', '')}</div>
+                            </div>
+                          </a>
+                        ))}
+                        {(!review?.screenshots || review.screenshots.length === 0) && (
+                          <div style={{ color: C.textMuted, fontSize: '13px' }}>No screenshots yet</div>
+                        )}
                       </div>
                     </td>
                   </tr>

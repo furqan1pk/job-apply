@@ -38,6 +38,9 @@ def init_db():
             error TEXT DEFAULT '',
             duration_sec REAL DEFAULT 0,
             screenshots TEXT DEFAULT '[]',
+            form_pdf TEXT DEFAULT '',
+            video_path TEXT DEFAULT '',
+            resume_used TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now','localtime')),
             applied_at TEXT,
             attempts INTEGER DEFAULT 0,
@@ -53,6 +56,13 @@ def init_db():
             FOREIGN KEY (job_id) REFERENCES jobs(id)
         );
     """)
+    conn.commit()
+
+    # Migrations — add columns if missing (for existing DBs)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+    for col, default in [("form_pdf", "''"), ("video_path", "''"), ("resume_used", "''")]:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT DEFAULT {default}")
     conn.commit()
 
 

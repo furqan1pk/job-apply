@@ -48,27 +48,59 @@ async def apply(page: Page, url: str, profile: dict, resume_pdf: str, dry_run: b
     except Exception:
         pass
 
-    # Wait for Cloudflare challenge to auto-resolve (up to 10s)
+    # Wait for page to fully load (Cloudflare challenge may auto-resolve)
+    try:
+        await page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception:
+        pass  # Continue even if networkidle times out
+
+    # Check for Cloudflare challenge and wait longer
     for sel in CAPTCHA_SELECTORS:
         if await page.query_selector(sel):
-            print(f"  [GH] Cloudflare challenge detected, waiting up to 10s...")
+            print(f"  [GH] Cloudflare challenge detected, waiting up to 20s...")
             try:
-                await page.wait_for_selector('#first_name, #application_form, form', timeout=10000)
+                await page.wait_for_selector('#first_name, #application_form, form, .job-post', timeout=20000)
                 print("  [GH] Challenge passed!")
             except Exception:
-                result["status"] = "captcha"
-                result["error"] = f"CAPTCHA blocked: {sel}"
-                return result
+                # Try waiting more — sometimes Cloudflare just needs time
+                await asyncio.sleep(5)
+                if await page.query_selector('#first_name, form'):
+                    print("  [GH] Challenge passed (delayed)!")
+                else:
+                    result["status"] = "captcha"
+                    result["error"] = f"CAPTCHA blocked: {sel}"
+                    return result
             break
 
     await screenshot("01_job_page")
 
     # Click Apply button if we're on the job description page (not the form yet)
-    apply_btn = await page.query_selector("a.btn--apply, a[href*='#app'], button:has-text('Apply'), a:has-text('Apply')")
-    if apply_btn:
-        print("  [GH] Clicking Apply button...")
-        await apply_btn.click()
-        await asyncio.sleep(random.uniform(2, 3))
+    apply_selectors = [
+        "a.btn--apply",
+        "a[href*='#app']",
+        "button:has-text('Apply for this job')",
+        "button:has-text('Apply now')",
+        "button:has-text('Apply')",
+        "a:has-text('Apply for this job')",
+        "a:has-text('Apply now')",
+        "a:has-text('Apply')",
+        ".postings-btn",
+        "[data-test='apply-button']",
+    ]
+    for sel in apply_selectors:
+        apply_btn = await page.query_selector(sel)
+        if apply_btn:
+            try:
+                visible = await apply_btn.is_visible()
+                if visible:
+                    print(f"  [GH] Clicking Apply button ({sel})...")
+                    await apply_btn.scroll_into_view_if_needed()
+                    await asyncio.sleep(0.5)
+                    await apply_btn.click()
+                    await asyncio.sleep(random.uniform(2, 3))
+                    break
+            except Exception:
+                continue
 
     # Check for CAPTCHA again after clicking Apply
     for sel in CAPTCHA_SELECTORS:
@@ -155,6 +187,23 @@ async def apply(page: Page, url: str, profile: dict, resume_pdf: str, dry_run: b
     await screenshot("05_questions_answered")
 
     await screenshot("06_ready_to_submit")
+
+    # --- SAVE FULL FORM AS PDF (proof of what was submitted) ---
+    try:
+        pdf_name = f"gh_{safe_title}_form.pdf"
+        pdf_path = SCREENSHOT_DIR / pdf_name
+        await page.pdf(path=str(pdf_path), format="A4", print_background=True)
+        result["form_pdf"] = str(pdf_path)
+        print(f"  [GH] Form PDF saved: {pdf_path}")
+    except Exception:
+        # PDF only works in headless mode — save full-page screenshot as fallback
+        fallback = SCREENSHOT_DIR / f"gh_{safe_title}_fullform.png"
+        await page.screenshot(path=str(fallback), full_page=True)
+        result["form_pdf"] = str(fallback)
+        print(f"  [GH] Full-page screenshot saved (PDF requires headless): {fallback}")
+
+    # Track which resume was used
+    result["resume_used"] = resume_pdf
 
     # --- HANDLE MULTI-PAGE FORMS ---
     # Some Greenhouse forms have multiple pages with "Next" buttons

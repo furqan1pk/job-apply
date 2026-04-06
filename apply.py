@@ -24,6 +24,10 @@ async def apply_single(url: str, profile: dict, resume_pdf: str, dry_run: bool, 
         print(f"  [SKIP]  Skipping unsupported platform: {platform} ({url})")
         return {"status": "skipped", "error": f"Unsupported platform: {platform}", "title": "", "company": "", "screenshots": []}
 
+    # Video recording directory
+    VIDEO_DIR = Path("recordings")
+    VIDEO_DIR.mkdir(exist_ok=True)
+
     async with async_playwright() as p:
         # Use persistent context with real Chrome user data to bypass Cloudflare
         chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
@@ -39,6 +43,8 @@ async def apply_single(url: str, profile: dict, resume_pdf: str, dry_run: bool, 
                 "--disable-infobars",
             ],
             viewport={"width": 1366, "height": 900},
+            record_video_dir=str(VIDEO_DIR),
+            record_video_size={"width": 1366, "height": 900},
         )
         # Stealth: hide webdriver flag
         await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -55,17 +61,41 @@ async def apply_single(url: str, profile: dict, resume_pdf: str, dry_run: bool, 
             else:
                 result = {"status": "skipped", "error": "unsupported", "title": "", "company": "", "screenshots": []}
         except Exception as e:
-            result = {"status": "failed", "error": str(e)[:200], "title": "", "company": ""}
-            print(f"  [FAIL] Error: {e}")
+            error_msg = str(e)[:200]
+            result = {"status": "failed", "error": error_msg, "title": "", "company": "", "screenshots": []}
+            print(f"  [FAIL] Error: {error_msg}")
             # Save error screenshot
             try:
                 await page.screenshot(path=str(SCREENSHOT_DIR / f"error_{platform}.png"))
             except Exception:
                 pass
         finally:
-            await context.close()
+            # Capture video path before closing
+            try:
+                video = page.video
+                if video:
+                    video_path = await video.path()
+                    # Rename to something meaningful
+                    safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in (result.get("company", platform))[:20])
+                    new_video = VIDEO_DIR / f"{platform}_{safe}.webm"
+                    try:
+                        Path(video_path).rename(new_video)
+                        result["video_path"] = str(new_video)
+                        print(f"  [VIDEO] Saved: {new_video}")
+                    except Exception:
+                        result["video_path"] = str(video_path)
+            except Exception:
+                pass
+
+            try:
+                await context.close()
+            except Exception:
+                pass
             if browser:
-                await browser.close()
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
 
     return result
 

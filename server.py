@@ -68,6 +68,52 @@ class ApplyRequest(BaseModel):
 
 # --- API Endpoints ---
 
+# Serve recordings as static files
+RECORDING_DIR = Path("recordings")
+RECORDING_DIR.mkdir(exist_ok=True)
+app.mount("/recordings", StaticFiles(directory=str(RECORDING_DIR)), name="recordings")
+
+
+@app.get("/api/jobs/{job_id}/review")
+def get_job_review(job_id: int):
+    """Get full review data for a job: screenshots, form PDF, video, resume used."""
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    review = {
+        "job": job,
+        "screenshots": [],
+        "form_pdf": None,
+        "video": None,
+        "resume_used": None,
+    }
+
+    # Screenshots
+    for s in (job.get("screenshots") or []):
+        name = Path(s).name
+        review["screenshots"].append({"name": name, "url": f"/screenshots/{name}"})
+
+    # Form PDF
+    if job.get("form_pdf"):
+        name = Path(job["form_pdf"]).name
+        if Path(job["form_pdf"]).exists():
+            review["form_pdf"] = {"name": name, "url": f"/screenshots/{name}"}
+
+    # Video
+    if job.get("video_path"):
+        name = Path(job["video_path"]).name
+        if Path(job["video_path"]).exists():
+            review["video"] = {"name": name, "url": f"/recordings/{name}"}
+
+    # Resume
+    if job.get("resume_used"):
+        name = Path(job["resume_used"]).name
+        review["resume_used"] = {"name": name, "path": job["resume_used"]}
+
+    return review
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "1.0.0"}
@@ -417,6 +463,9 @@ def _run_batch(job_ids: list[int], dry_run: bool, headed: bool):
                 error=error,
                 duration_sec=round(duration, 1),
                 screenshots=screenshots,
+                form_pdf=result.get("form_pdf", ""),
+                video_path=result.get("video_path", ""),
+                resume_used=resume,
                 applied_at=datetime.now().isoformat() if status == "applied" else None,
                 attempts=job.get("attempts", 0) + 1,
             )
